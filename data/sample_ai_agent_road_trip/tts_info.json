@@ -1,0 +1,12 @@
+{
+  "provider": "qwentts",
+  "model": "qwen3-tts-1.7b-custom",
+  "voices": {
+    "A": "Serena",
+    "B": "Ryan",
+    "C": "Vivian",
+    "D": "Aiden"
+  },
+  "script": "/work/b12901015/Audio_synthesize/run_script/ai_agent_road_trip/script.jsonl",
+  "generated_at": "2026-08-29T17:15:11"
+}

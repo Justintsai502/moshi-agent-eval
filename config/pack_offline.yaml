@@ -1,0 +1,25 @@
+# Laptop smoke test over the real phase3 clip pack. Loads NO models:
+# asr.backend=gold substitutes the authored agent lines, judge.backend=mock.
+# Proves discovery, pairing, prompt building and reporting on all 49 clips.
+run_name: pack_offline
+out_dir: runs
+
+data:
+  pack_dir: bathrooms/kcire/mpmoshi-ifami/packs/phase3_p0_IF_evalset_subset
+  scripts_dir: authored_scripts
+  agent_speaker: C
+  limit: 0
+
+asr:
+  backend: gold
+
+pairing:
+  mode: time
+  merge_gap_s: 0.8
+  min_response_words: 2
+  context_max_turns: 8
+
+judge:
+  backend: mock
+  model: Qwen/Qwen3-32B
+  use_reference: true

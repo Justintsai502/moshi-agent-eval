@@ -1,0 +1,38 @@
+# Real run on the server: Whisper over the Moshi track, Qwen3-32B as judge.
+# Requires MOSHI_EVAL_ALLOW_HEAVY=1.
+#
+# The Moshi ground truth has NO agent rows, so there is no reference answer:
+# use_reference is false and the judge rules on world knowledge alone.
+run_name: moshi_run01
+out_dir: runs
+
+data:
+  ground_truth: data/moshi_run01/aligned_script.jsonl   # human turns only
+  agent_audio: data/moshi_run01/agent_track.wav         # Moshi output stem
+  agent_speaker: C
+  query_selector: addressing
+
+asr:
+  backend: faster_whisper
+  model: large-v3
+  language: en
+  device: cuda
+  compute_type: float16
+  beam_size: 5
+  vad_filter: true
+
+pairing:
+  overlap_tolerance_s: 1.0
+  response_window_s: 12.0
+  merge_gap_s: 0.8
+
+judge:
+  backend: vllm
+  model: Qwen/Qwen3-32B
+  tensor_parallel_size: 2
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: bfloat16
+  temperature: 0.0
+  max_new_tokens: 512
+  use_reference: false

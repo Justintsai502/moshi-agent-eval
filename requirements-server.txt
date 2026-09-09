@@ -1,0 +1,14 @@
+-r requirements.txt
+
+# ASR
+faster-whisper>=1.0.0
+# or: openai-whisper>=20231117
+
+# Qwen judge (pick one path)
+torch>=2.3
+transformers>=4.51        # Qwen3 support
+vllm>=0.8.5               # for judge.backend=vllm
+accelerate>=0.30
+
+# only for judge.backend=openai
+openai>=1.30

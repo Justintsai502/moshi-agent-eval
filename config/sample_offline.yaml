@@ -1,0 +1,24 @@
+# Laptop smoke test on the scripted TTS sample.
+# Loads NO models: 'gold' ASR reuses the scripted agent text, 'mock' judge
+# emits mock_unjudged. Use it to verify pairing, prompts and reporting.
+run_name: sample_offline
+out_dir: runs
+
+data:
+  ground_truth: data/sample_ai_agent_road_trip/aligned_script.jsonl
+  agent_audio: data/sample_ai_agent_road_trip/audio_qwen3-tts-1.7b-custom_C.wav
+  agent_speaker: C
+  query_selector: addressing
+
+asr:
+  backend: gold
+
+pairing:
+  overlap_tolerance_s: 1.0
+  response_window_s: 12.0
+  merge_gap_s: 0.8
+
+judge:
+  backend: mock
+  model: Qwen/Qwen3-32B
+  use_reference: true

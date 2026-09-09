@@ -1,0 +1,38 @@
+# Real run on the server: Whisper over each clip's response.wav (the Moshi
+# output), Qwen3-32B as judge. Requires MOSHI_EVAL_ALLOW_HEAVY=1.
+#
+# input.wav is never transcribed -- the human side is known verbatim from the
+# authored script, so ASR would only add error.
+run_name: pack_smoke3
+out_dir: runs
+
+data:
+  pack_dir: bathrooms/kcire/mpmoshi-ifami/packs/phase3_p0_IF_evalset_subset
+  scripts_dir: authored_scripts
+  agent_speaker: C
+  limit: 3
+
+asr:
+  backend: faster_whisper
+  model: large-v3
+  language: en
+  device: cuda
+  compute_type: float16
+  beam_size: 5
+  vad_filter: true
+
+pairing:
+  mode: time
+  merge_gap_s: 0.8
+  min_response_words: 2
+
+judge:
+  backend: vllm
+  model: Qwen/Qwen3-32B
+  tensor_parallel_size: 2
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: bfloat16
+  temperature: 0.0
+  max_new_tokens: 512
+  use_reference: true

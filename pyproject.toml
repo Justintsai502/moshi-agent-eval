@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moshi-agent-eval"
+version = "0.1.0"
+description = "ASR + Qwen-as-judge evaluation of a Moshi spoken agent track"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+moshi-eval = "moshi_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,28 @@
+# Calibration: run the REAL judge over the scripted TTS sample, where the
+# intended answers are known. Any disagreement is a judge problem, not an
+# agent problem -- fix it here before trusting the Moshi numbers.
+run_name: calibration_tts
+out_dir: runs
+
+data:
+  ground_truth: data/sample_ai_agent_road_trip/aligned_script.jsonl
+  agent_audio: data/sample_ai_agent_road_trip/audio_qwen3-tts-1.7b-custom_C.wav
+  agent_speaker: C
+  query_selector: addressing
+
+asr:
+  backend: faster_whisper
+  model: large-v3
+  language: en
+  device: cuda
+  compute_type: float16
+
+pairing:
+  overlap_tolerance_s: 1.0
+  response_window_s: 12.0
+
+judge:
+  backend: vllm
+  model: Qwen/Qwen3-32B
+  temperature: 0.0
+  use_reference: false      # judge blind, then diff against the script

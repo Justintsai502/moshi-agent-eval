@@ -1,0 +1,2 @@
+# Laptop / offline path. Nothing here loads a model.
+pyyaml>=6.0

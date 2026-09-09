@@ -1,0 +1,9 @@
+runs/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+data/moshi_run*/
+bathrooms/
+authored_scripts/
+.DS_Store
