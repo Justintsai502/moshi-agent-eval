@@ -12,6 +12,77 @@ from dataclasses import dataclass
 
 from .schema import Utterance, read_jsonl
 
+# Two turns starting within this window are treated as simultaneous: which one
+# "came first" is then decided by discourse role, not by sub-frame jitter.
+SIMULTANEITY_TOL_S = 0.05
+
+_NUM_RE = re.compile(r"(\d+)")
+
+
+def natural_key(utt_id: str) -> tuple:
+    """Split digits out so g9 sorts before g10, not after."""
+    return tuple(
+        int(part) if part.isdigit() else part
+        for part in _NUM_RE.split(utt_id)
+    )
+
+
+def _role_rank(u: Utterance) -> int:
+    """Backchannels render after the speech they are layered onto.
+
+    A backchannel is a reaction on top of someone else's ongoing turn. Placing
+    it first makes the transcript read as if the reaction preceded its trigger.
+    """
+    return 1 if u.function == "backchannel" else 0
+
+
+def sort_utterances(rows: list[Utterance]) -> list[Utterance]:
+    """Order turns by time, resolving near-simultaneous starts sensibly.
+
+    Row order in these files is authoring order, not time order, and utt_id
+    order is neither -- in the road-trip sample g006 precedes g005 in the file
+    while starting 11.7 ms earlier, and the two overlap for 8 s.
+
+    Pass 1 sorts strictly by (start, end, natural utt_id): deterministic, and
+    never depends on how the file happened to be written.
+
+    Pass 2 walks that order and re-sorts each run of turns whose starts fall
+    within SIMULTANEITY_TOL_S of the run's first start, by (role, end, id).
+    Doing it as a local sweep rather than by quantising `start` avoids the
+    boundary artefact where two turns 40 ms apart land in different buckets.
+
+    `gap_ms` is deliberately ignored: the sample's top-level value disagrees
+    with `rel.gap_ms` on overlapping turns (g005: -7081.6 vs +77.0). Only
+    `start`/`end` are trusted.
+    """
+    ordered = sorted(rows, key=lambda u: (u.start, u.end, natural_key(u.utt_id)))
+
+    out: list[Utterance] = []
+    i = 0
+    while i < len(ordered):
+        j = i + 1
+        anchor = ordered[i].start
+        while j < len(ordered) and ordered[j].start - anchor <= SIMULTANEITY_TOL_S:
+            j += 1
+        group = ordered[i:j]
+        if len(group) > 1:
+            group.sort(key=lambda u: (_role_rank(u), u.end, natural_key(u.utt_id)))
+        out += group
+        i = j
+    return out
+
+
+def find_overlaps(rows: list[Utterance]) -> list[tuple[str, str, float]]:
+    """(earlier_id, later_id, seconds_of_overlap) for every overlapping pair."""
+    ordered = sorted(rows, key=lambda u: u.start)
+    hits: list[tuple[str, str, float]] = []
+    for a_i, a in enumerate(ordered):
+        for b in ordered[a_i + 1:]:
+            if b.start >= a.end:
+                break
+            hits.append((a.utt_id, b.utt_id, min(a.end, b.end) - b.start))
+    return hits
+
 DEFAULT_WAKE_PATTERNS = (r"\bai\s*agent\b", r"\bhey\s+agent\b", r"\bassistant\b")
 
 
@@ -59,12 +130,10 @@ def load_ground_truth(
 ) -> GroundTruth:
     """Read aligned_script.jsonl.
 
-    Rows are sorted by ``start`` -- the file is NOT guaranteed to be in time
-    order (overlapping turns show up out of sequence), so never trust line
-    order here.
+    Never trust line order: the file is written in authoring order, which for
+    overlapping turns is not time order. See ``sort_utterances``.
     """
-    rows = [Utterance.from_gold(r) for r in read_jsonl(path)]
-    rows.sort(key=lambda u: (u.start, u.utt_id))
+    rows = sort_utterances([Utterance.from_gold(r) for r in read_jsonl(path)])
 
     human = [u for u in rows if u.speaker != agent_speaker]
     agent = [u for u in rows if u.speaker == agent_speaker]
@@ -83,7 +152,7 @@ def render_context(
 ) -> list[str]:
     """Human dialogue lines shortly before ``up_to``, for judge context."""
     picked = [
-        u for u in turns
+        u for u in sort_utterances(turns)
         if u.end <= up_to + 1e-6 and u.start >= up_to - window_s
     ]
     lines = [
