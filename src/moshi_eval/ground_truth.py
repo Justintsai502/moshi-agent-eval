@@ -153,11 +153,11 @@ def render_context(
     """Human dialogue lines shortly before ``up_to``, for judge context."""
     picked = [
         u for u in sort_utterances(turns)
-        if u.end <= up_to + 1e-6 and u.start >= up_to - window_s
+        if u.function == "speech"
+        and u.end <= up_to + 1e-6
+        and u.start >= up_to - window_s
     ]
-    lines = [
-        f"[{u.start:7.2f}s] Speaker {u.speaker}"
-        f"{' (backchannel)' if u.function == 'backchannel' else ''}: {u.text}"
+    return [
+        f"[{u.start:7.2f}s] Speaker {u.speaker}: {u.text}"
         for u in picked[-max_turns:]
     ]
-    return lines

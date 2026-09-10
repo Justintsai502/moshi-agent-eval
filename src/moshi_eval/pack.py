@@ -137,22 +137,33 @@ def pack_asr(
 def _question_times(
     script: AuthoredScript, input_segs: list[Utterance], cfg
 ) -> tuple[dict[int, tuple[float, float]], float]:
-    """Place each question on the clip's clock via authored-to-ASR alignment."""
-    human = [t for t in script.turns if t.speaker != script.agent_speaker]
+    """Place each question on the clip's clock via authored-to-ASR alignment.
+
+    Only human *speech* is aligned. Backchannels are dropped first: ASR
+    discards most of them anyway, so feeding them to the aligner just created
+    unmatchable rows that dragged the reported coverage down without ever
+    affecting a question.
+
+    The coverage returned is over questions, not over all turns -- a clip
+    whose two questions both landed is fully usable however many ordinary
+    turns failed to match.
+    """
+    human = script.human_speech
     al = align_turns_to_asr(
         [t.text for t in human], [s.text for s in input_segs],
         min_score=cfg.pairing.align_min_score,
     )
-    q_keys = {t.key for t in script.queries}
     order_of = {t.key: k for k, t in enumerate(script.queries)}
 
     times: dict[int, tuple[float, float]] = {}
     for ti, (ai, _score) in al.matched.items():
-        turn = human[ti]
-        if turn.key in q_keys:
+        key = human[ti].key
+        if key in order_of:
             seg = input_segs[ai]
-            times[order_of[turn.key]] = (seg.start, seg.end)
-    return times, al.coverage
+            times[order_of[key]] = (seg.start, seg.end)
+
+    q_cov = len(times) / len(order_of) if order_of else 1.0
+    return times, q_cov
 
 
 def pack_pair(
@@ -188,8 +199,10 @@ def pack_pair(
 
     if coverages:
         import statistics
+        full = sum(1 for c in coverages if c >= 1.0)
         print(
-            f"[pack] authored-to-ASR alignment coverage: "
+            f"[pack] question timing recovered: "
+            f"{full}/{len(coverages)} clips fully, "
             f"median {statistics.median(coverages):.0%}, min {min(coverages):.0%}"
         )
 

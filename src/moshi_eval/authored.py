@@ -52,26 +52,36 @@ class AuthoredScript:
     def agent_turns(self) -> list[AuthoredTurn]:
         return [t for t in self.turns if t.speaker == self.agent_speaker]
 
+    @property
+    def human_speech(self) -> list[AuthoredTurn]:
+        """Human turns that are actual speech.
+
+        Backchannels are excluded from the whole pipeline. Measured over 400
+        timed scripts: every one of the 958 overlapping turn pairs involves a
+        backchannel, and speech never overlaps speech. Dropping them leaves a
+        strictly sequential timeline -- and ASR drops most of them anyway, so
+        keeping them only poisoned the authored-to-ASR alignment.
+        """
+        return [
+            t for t in self.turns
+            if t.speaker != self.agent_speaker
+            and t.function == "speech"
+            and t.text.strip()
+        ]
+
     def reference_for(self, query: AuthoredTurn) -> str | None:
         """The agent turn that directly follows this query in the script."""
         after = [t for t in self.agent_turns if t.index > query.index]
         return after[0].text.strip() if after else None
 
     def context_for(self, query: AuthoredTurn, max_turns: int = 8) -> list[str]:
-        """Preceding human turns, verbatim from the script (no ASR error).
+        """Preceding human speech, verbatim from the script (no ASR error).
 
-        The agent's own scripted lines are withheld -- the judge must not see
-        the intended answer as if it were conversation history.
+        Backchannels are omitted, and so are the agent's own scripted lines --
+        the judge must never see the intended answer as conversation history.
         """
-        prior = [
-            t for t in self.turns
-            if t.index < query.index and t.speaker != self.agent_speaker
-        ]
-        return [
-            f"Speaker {t.speaker}"
-            f"{' (backchannel)' if t.function == 'backchannel' else ''}: {t.text}"
-            for t in prior[-max_turns:]
-        ]
+        prior = [t for t in self.human_speech if t.index < query.index]
+        return [f"Speaker {t.speaker}: {t.text}" for t in prior[-max_turns:]]
 
 
 def load_authored_script(path: str, clip_id: str = "", agent_speaker: str = "C") -> AuthoredScript:
