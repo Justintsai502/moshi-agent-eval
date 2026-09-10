@@ -25,7 +25,7 @@ from .authored import AuthoredScript, load_authored_script
 from .judge import judge_pairs
 from .pairing import build_pairs_by_order, build_pairs_by_time
 from .report import render_markdown, summarize
-from .schema import QAPair, Utterance, Verdict, write_jsonl
+from .schema import QAPair, Utterance, Verdict, read_jsonl, write_jsonl
 
 
 @dataclass
@@ -331,6 +331,16 @@ def run_timed(cfg) -> dict[str, Any]:
     agent_spk: set[str] = set()
     n_no_question = 0
 
+    cached: dict[str, list[Utterance]] = {}
+    asr_path = os.path.join(out_dir, "asr.jsonl")
+    if cfg.data.reuse_asr and os.path.exists(asr_path):
+        for r in read_jsonl(asr_path):
+            r = dict(r)
+            cid = r.pop("clip_id", "")
+            r.pop("track", None)
+            cached.setdefault(cid, []).append(Utterance(**r))
+        print(f"[timed] reusing ASR for {len(cached)} clip(s) from {asr_path}")
+
     for i, clip in enumerate(clips, 1):
         script = load_timed_script(
             clip.script, clip.clip_id, cfg.data.agent_speaker or None
@@ -341,7 +351,9 @@ def run_timed(cfg) -> dict[str, Any]:
             n_no_question += 1
             continue
 
-        if cfg.asr.backend == "gold":
+        if clip.clip_id in cached:
+            segs = cached[clip.clip_id]
+        elif cfg.asr.backend == "gold":
             # Oracle: the scripted agent turns, at their real timestamps. No
             # synthetic clock is needed here -- the ground truth has one.
             segs = [

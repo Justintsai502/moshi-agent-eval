@@ -25,6 +25,9 @@ class DataConfig:
     agent_audio_dir: str = ""          # "" -> use the scripted agent stem
     agent_audio_name: str = "response.wav"
     ids_file: str = ""
+    # Reuse asr.jsonl from a previous run of the same run_name instead of
+    # transcribing again. A judge crash should not cost another ASR pass.
+    reuse_asr: bool = False
     limit: int = 0                       # 0 = all clips
     agent_speaker: str = "C"
 

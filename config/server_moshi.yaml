@@ -29,7 +29,7 @@ pairing:
 judge:
   backend: vllm
   model: Qwen/Qwen3-32B
-  tensor_parallel_size: 2
+  tensor_parallel_size: 1        # bump to match however many GPUs you allocated
   gpu_memory_utilization: 0.90
   max_model_len: 8192
   dtype: bfloat16
