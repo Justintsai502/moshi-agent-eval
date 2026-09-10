@@ -13,7 +13,7 @@ import json
 import sys
 
 from .config import load_config
-from .pack import run_pack
+from .pack import run_pack, run_timed
 from .pipeline import run_all, stage_asr, stage_judge, stage_pair, stage_report
 
 STAGES = {
@@ -23,6 +23,7 @@ STAGES = {
     "report": stage_report,
     "run": run_all,
     "pack": run_pack,
+    "timed": run_timed,
 }
 
 

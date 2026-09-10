@@ -24,7 +24,7 @@ asr:
 pairing:
   mode: time
   merge_gap_s: 0.8
-  min_response_words: 2
+  min_response_words: 1
 
 judge:
   backend: vllm

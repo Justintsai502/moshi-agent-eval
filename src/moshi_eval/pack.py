@@ -289,3 +289,128 @@ def run_pack(cfg) -> dict[str, Any]:
     with open(os.path.join(out_dir, "config.used.json"), "w", encoding="utf-8") as fh:
         json.dump(asdict(cfg), fh, ensure_ascii=False, indent=2)
     return summary
+
+
+# --- timed layout ------------------------------------------------------------
+
+def run_timed(cfg) -> dict[str, Any]:
+    """Evaluate clips whose ground truth already carries timestamps.
+
+    Verified on phase3_p0_IF4_evalset: for all 155 clips the last human turn's
+    end equals input.wav's duration to within 0.00 s, and response.wav shares
+    that origin (plus a 20 s tail). So question times are read straight off
+    aligned_script.jsonl -- no ASR of the user mix, and no authored-to-ASR
+    alignment, which is where the 3-speaker path lost questions.
+    """
+    from .timed import discover_timed_clips, load_timed_script
+
+    out_dir = os.path.join(cfg.out_dir, cfg.run_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    clips, problems = discover_timed_clips(
+        scripts_root=cfg.data.scripts_root,
+        agent_audio_dir=cfg.data.agent_audio_dir,
+        agent_audio_name=cfg.data.agent_audio_name,
+        ids_file=cfg.data.ids_file,
+        agent_speaker=cfg.data.agent_speaker or None,
+        limit=cfg.data.limit,
+    )
+    if problems:
+        print(f"[warn] skipping {len(problems)} clip(s):")
+        for p in problems[:10]:
+            print(f"   {p}")
+    if not clips:
+        raise SystemExit("no usable clips found -- check data.scripts_root / ids_file")
+
+    src = cfg.data.agent_audio_dir or "(scripted agent stem -- calibration run)"
+    print(f"[timed] {len(clips)} clip(s); agent audio from {src}")
+
+    all_pairs: list[QAPair] = []
+    leftovers: list[dict[str, Any]] = []
+    asr_rows: list[dict[str, Any]] = []
+    agent_spk: set[str] = set()
+    n_no_question = 0
+
+    for i, clip in enumerate(clips, 1):
+        script = load_timed_script(
+            clip.script, clip.clip_id, cfg.data.agent_speaker or None
+        )
+        agent_spk.add(script.agent_speaker)
+
+        if not script.queries:
+            n_no_question += 1
+            continue
+
+        if cfg.asr.backend == "gold":
+            # Oracle: the scripted agent turns, at their real timestamps. No
+            # synthetic clock is needed here -- the ground truth has one.
+            segs = [
+                Utterance(
+                    utt_id=f"{clip.clip_id}#{u.utt_id}", speaker="AGENT",
+                    start=u.start, end=u.end, text=u.text, source="asr",
+                )
+                for u in script.agent_turns
+            ]
+        else:
+            segs = asr_mod.transcribe(clip.agent_wav, cfg.asr)
+
+        asr_rows += [
+            {"clip_id": clip.clip_id, "track": "response", **asdict(s)} for s in segs
+        ]
+
+        pairs, extra = build_pairs_by_time(
+            script, script.query_times(), segs, cfg.pairing,
+            include_reference=cfg.judge.use_reference,
+        )
+        all_pairs += pairs
+        leftovers += [{"clip_id": clip.clip_id, **asdict(s)} for s in extra]
+
+        if i % 25 == 0 or i == len(clips):
+            print(f"  [asr {i}/{len(clips)}] {len(all_pairs)} question(s) so far")
+
+    write_jsonl(os.path.join(out_dir, "asr.jsonl"), asr_rows)
+    write_jsonl(os.path.join(out_dir, "pairs.jsonl"), all_pairs)
+    write_jsonl(os.path.join(out_dir, "unmatched_agent_segments.jsonl"), leftovers)
+
+    from .prompts import build_messages
+    write_jsonl(
+        os.path.join(out_dir, "prompts.jsonl"),
+        [
+            {"pair_id": p.pair_id, "clip_id": p.clip_id,
+             "messages": build_messages(p, cfg.judge.use_reference)}
+            for p in all_pairs if p.status == "answered"
+        ],
+    )
+
+    if n_no_question:
+        print(f"[timed] {n_no_question} clip(s) ask the agent nothing -- skipped")
+    print(f"[timed] agent speaker: {sorted(agent_spk)}")
+
+    verdicts = judge_pairs(all_pairs, cfg.judge)
+    write_jsonl(os.path.join(out_dir, "verdicts.jsonl"), verdicts)
+
+    summary = summarize(
+        all_pairs, verdicts, unmatched=leftovers,
+        judge_backend=cfg.judge.backend,
+        meta={
+            "scripts_root": cfg.data.scripts_root,
+            "agent_audio_dir": cfg.data.agent_audio_dir or "(scripted stem)",
+            "ids_file": cfg.data.ids_file,
+            "n_clips": len(clips),
+            "clips_without_questions": n_no_question,
+            "agent_speaker": sorted(agent_spk),
+            "asr_backend": cfg.asr.backend,
+            "asr_model": cfg.asr.model,
+            "judge_backend": cfg.judge.backend,
+            "judge_model": cfg.judge.model,
+            "use_reference": cfg.judge.use_reference,
+            "pairing_mode": "timed_ground_truth",
+        },
+    )
+    with open(os.path.join(out_dir, "report.json"), "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, ensure_ascii=False, indent=2)
+    with open(os.path.join(out_dir, "report.md"), "w", encoding="utf-8") as fh:
+        fh.write(render_markdown(summary))
+    with open(os.path.join(out_dir, "config.used.json"), "w", encoding="utf-8") as fh:
+        json.dump(asdict(cfg), fh, ensure_ascii=False, indent=2)
+    return summary

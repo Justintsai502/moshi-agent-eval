@@ -1,0 +1,41 @@
+# Real run: Whisper over each clip's Moshi response.wav, Qwen3-32B as judge.
+# Requires MOSHI_EVAL_ALLOW_HEAVY=1.
+#
+# No ASR of input.wav and no text alignment: aligned_script.jsonl already
+# carries the clock that response.wav shares.
+run_name: if4_p0_step1350
+out_dir: runs
+
+data:
+  scripts_root: /work/b12901015/if_dataset_4spk
+  ids_file: /work/b12901015/eval_packs/phase3_p0_IF4_evalset/ids.txt
+  agent_audio_dir: /work/b12901015/eval_packs/phase3_p0_IF4_evalset/clips
+  agent_audio_name: response.wav
+  agent_speaker: ""
+  limit: 0
+
+asr:
+  backend: faster_whisper
+  model: large-v3
+  language: en
+  device: cuda
+  compute_type: float16
+  beam_size: 5
+  vad_filter: true
+
+pairing:
+  overlap_tolerance_s: 1.0
+  response_window_s: 12.0
+  merge_gap_s: 0.8
+  min_response_words: 1
+
+judge:
+  backend: vllm
+  model: Qwen/Qwen3-32B
+  tensor_parallel_size: 2
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: bfloat16
+  temperature: 0.0
+  max_new_tokens: 512
+  use_reference: true

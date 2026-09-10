@@ -20,6 +20,11 @@ class DataConfig:
     # clip-pack mode (ids.txt + clips/<id>/{input,response}.wav + *_qa.json)
     pack_dir: str = ""
     scripts_dir: str = ""
+    # timed mode (<scripts_root>/<id>/aligned_script.jsonl carries the clock)
+    scripts_root: str = ""
+    agent_audio_dir: str = ""          # "" -> use the scripted agent stem
+    agent_audio_name: str = "response.wav"
+    ids_file: str = ""
     limit: int = 0                       # 0 = all clips
     agent_speaker: str = "C"
 

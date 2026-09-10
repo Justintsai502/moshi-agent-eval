@@ -30,6 +30,25 @@ class Utterance:
     def duration(self) -> float:
         return self.end - self.start
 
+    @staticmethod
+    def _fix_addressing(raw: Any) -> list[str]:
+        """Repair addressing lists that were exploded into characters.
+
+        625 turns in synthesized_if_dataset_4spk carry ["g","r","o","u","p"]
+        instead of ["group"] -- an upstream list() over a string. None of them
+        happen to contain "D", so no question was mislabelled, but a one-letter
+        speaker id landing inside an exploded word would silently invent one.
+
+        Only all-lowercase runs are rejoined: speaker ids are uppercase, so
+        ["A","B"] is a genuine two-target list and must survive untouched.
+        """
+        items = [str(x) for x in (raw or [])]
+        if len(items) > 1 and all(
+            len(x) == 1 and x.isalpha() and x.islower() for x in items
+        ):
+            return ["".join(items)]
+        return items
+
     @classmethod
     def from_gold(cls, row: dict[str, Any]) -> "Utterance":
         return cls(
@@ -40,7 +59,7 @@ class Utterance:
             text=row.get("text", ""),
             function=row.get("function", "speech"),
             subtype=row.get("subtype"),
-            addressing=list(row.get("addressing") or []),
+            addressing=cls._fix_addressing(row.get("addressing")),
             source="gold",
         )
 

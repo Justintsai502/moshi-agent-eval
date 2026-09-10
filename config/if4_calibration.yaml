@@ -1,0 +1,28 @@
+# Laptop smoke test over the real 155-clip IF4 eval set. Loads NO models:
+# asr.backend=gold substitutes the scripted agent turns at their real
+# timestamps, judge.backend=mock emits mock_unjudged.
+run_name: if4_calibration
+out_dir: runs
+
+data:
+  scripts_root: authored_scripts/synthesized_if_dataset_4spk
+  ids_file: phase3_p0_IF4_evalset/ids.txt
+  agent_audio_dir: ""          # scripted agent stem -> known-good answers
+  agent_audio_name: response.wav
+  agent_speaker: ""          # "" = detect from the data (it is D here)
+  limit: 0
+
+asr:
+  backend: gold
+
+pairing:
+  overlap_tolerance_s: 1.0
+  response_window_s: 12.0
+  merge_gap_s: 0.8
+  min_response_words: 1
+  context_max_turns: 8
+
+judge:
+  backend: mock
+  model: Qwen/Qwen3-32B
+  use_reference: true

@@ -22,7 +22,20 @@ SCRIPTS = os.path.join(ROOT, "authored_scripts")
 CLIP = "ai_agent_3d_printing"
 
 
+class Skip(Exception):
+    """Raised when the data a test needs is not present in this checkout."""
+
+
+def need(path: str) -> str:
+    """Data-dependent tests skip rather than fail on a checkout without data."""
+    if not os.path.exists(path):
+        raise Skip(f"missing {os.path.relpath(path, ROOT)}")
+    return path
+
+
+
 def test_pack_discovery_is_complete():
+    need(PACK); need(SCRIPTS)
     clips, problems = discover_clips(PACK, SCRIPTS)
     assert len(clips) == 49, f"expected 49 clips, got {len(clips)}"
     assert problems == [], problems
@@ -31,6 +44,7 @@ def test_pack_discovery_is_complete():
 
 
 def test_authored_script_structure():
+    need(PACK); need(SCRIPTS)
     s = load_authored_script(os.path.join(SCRIPTS, f"{CLIP}_qa.json"), CLIP)
     assert [t.key for t in s.queries] == ["A,4", "A,11"]
     assert len(s.agent_turns) == 2
@@ -43,6 +57,7 @@ def test_authored_script_structure():
 
 
 def test_every_clip_has_two_questions_and_two_references():
+    need(PACK); need(SCRIPTS)
     clips, _ = discover_clips(PACK, SCRIPTS)
     for c in clips:
         s = load_authored_script(c.script_json, c.clip_id)
@@ -51,6 +66,7 @@ def test_every_clip_has_two_questions_and_two_references():
 
 
 def test_alignment_survives_realistic_asr_noise():
+    need(PACK); need(SCRIPTS)
     """Dropped backchannels, a split turn and word errors must not break it."""
     s = load_authored_script(os.path.join(SCRIPTS, f"{CLIP}_qa.json"), CLIP)
     human = [t for t in s.turns if t.speaker != "C"]
@@ -82,6 +98,7 @@ def test_token_f1_discriminates():
 
 
 def test_order_pairing_flags_burst_count_mismatch():
+    need(PACK); need(SCRIPTS)
     s = load_authored_script(os.path.join(SCRIPTS, f"{CLIP}_qa.json"), CLIP)
     # three bursts against two questions -> every pair flagged
     segs = [
@@ -95,6 +112,7 @@ def test_order_pairing_flags_burst_count_mismatch():
 
 
 def test_order_pairing_drops_short_blips():
+    need(PACK); need(SCRIPTS)
     s = load_authored_script(os.path.join(SCRIPTS, f"{CLIP}_qa.json"), CLIP)
     segs = [
         Utterance("blip", "AGENT", 3.7, 4.2, "uh", source="asr"),
@@ -107,6 +125,7 @@ def test_order_pairing_drops_short_blips():
 
 
 def test_time_pairing_reports_unknown_time_distinctly():
+    need(PACK); need(SCRIPTS)
     """An unalignable question must not be reported as a silent agent."""
     s = load_authored_script(os.path.join(SCRIPTS, f"{CLIP}_qa.json"), CLIP)
     segs = [Utterance("a1", "AGENT", 20.0, 23.0, "PLA plastic is common", source="asr")]
@@ -116,6 +135,7 @@ def test_time_pairing_reports_unknown_time_distinctly():
 
 
 def test_full_pack_offline_run():
+    need(PACK); need(SCRIPTS)
     with tempfile.TemporaryDirectory() as d:
         cfg = load_config(os.path.join(ROOT, "config/pack_offline.yaml"),
                           overrides=[f'out_dir="{d}"', "data.limit=5"])
@@ -136,7 +156,14 @@ def test_full_pack_offline_run():
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    ran = skipped = 0
     for fn in fns:
-        fn()
+        try:
+            fn()
+        except Skip as exc:
+            print(f"SKIP {fn.__name__}  ({exc})")
+            skipped += 1
+            continue
         print(f"PASS {fn.__name__}")
-    print(f"\n{len(fns)} passed")
+        ran += 1
+    print(f"\n{ran} passed, {skipped} skipped")

@@ -23,9 +23,31 @@ class PairingConfig:
     context_window_s: float = 30.0
     context_max_turns: int = 8
     # Bursts with fewer words than this are treated as noise, not answers.
-    min_response_words: int = 2
+    # Keep at 1: agents answer factual questions with a single word ("Seven.",
+    # "7."), and a word-count filter silently deleted those as blips.
+    min_response_words: int = 1
     mode: str = "time"                # time | order
     align_min_score: float = 0.34     # token-F1 floor for authored<->ASR match
+
+
+FILLERS = {"uh", "um", "mm", "hmm", "mhm", "ah", "oh", "er", "erm", "hm"}
+
+
+def is_noise(text: str, min_words: int) -> bool:
+    """A burst that carries no answer: empty, filler-only, or under min_words."""
+    words = [w.strip(".,!?;:").lower() for w in text.split()]
+    words = [w for w in words if w]
+    if len(words) < max(1, min_words):
+        return True
+    return all(w in FILLERS for w in words)
+
+
+def _turn_id(turn) -> str:
+    """Identify a turn from either ground-truth shape.
+
+    Authored scripts key turns as "A,4"; timed scripts use utt_id "g005".
+    """
+    return getattr(turn, "key", None) or turn.utt_id
 
 
 def _merge(segs: list[Utterance], gap: float) -> list[list[Utterance]]:
@@ -149,7 +171,7 @@ def build_pairs_by_order(
     # Drop blips too short to be an answer (breath, click, a stray token).
     kept = [
         g for g in groups
-        if len(" ".join(s.text for s in g).split()) >= cfg.min_response_words
+        if not is_noise(" ".join(s.text for s in g), cfg.min_response_words)
     ]
     dropped = [g for g in groups if g not in kept]
 
@@ -159,7 +181,7 @@ def build_pairs_by_order(
     for k, q in enumerate(queries):
         pair = QAPair(
             pair_id=f"{script.clip_id}#q{k + 1}",
-            query_utt_id=q.key,
+            query_utt_id=_turn_id(q),
             query_speaker=q.speaker,
             query_text=q.text,
             clip_id=script.clip_id,
@@ -208,7 +230,7 @@ def build_pairs_by_time(
     groups = _merge(sorted(asr_segments, key=lambda u: u.start), cfg.merge_gap_s)
     kept = [
         g for g in groups
-        if len(" ".join(s.text for s in g).split()) >= cfg.min_response_words
+        if not is_noise(" ".join(s.text for s in g), cfg.min_response_words)
     ]
     used: set[int] = set()
 
@@ -218,7 +240,7 @@ def build_pairs_by_time(
     for k, q in enumerate(queries):
         pair = QAPair(
             pair_id=f"{script.clip_id}#q{k + 1}",
-            query_utt_id=q.key,
+            query_utt_id=_turn_id(q),
             query_speaker=q.speaker,
             query_text=q.text,
             clip_id=script.clip_id,
