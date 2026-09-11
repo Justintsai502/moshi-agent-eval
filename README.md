@@ -1,183 +1,109 @@
 # moshi-agent-eval
 
-Evaluate a **Moshi-driven spoken agent** against the human-side ground truth of a
-multi-party conversation.
-
-The setup: three time-aligned audio stems (A, B human; C = the agent). Once Moshi
-replaces the scripted TTS agent, **track C has audio but no transcript** — so its
-answers have to be recovered by ASR and then judged.
+Evaluates the answers a Moshi-driven AI agent gives inside a multi-party
+conversation. The agent's audio track is transcribed with ASR, each answer is
+matched to the question it responds to, and Qwen3-32B judges it against the
+scripted reference answer.
 
 ```
-agent track (.wav)  ──ASR──▶  hypothesis turns  ──┐
-                                                  ├─▶ Qwen judge ─▶ verdicts ─▶ report
-aligned_script.jsonl (humans) ──▶ agent-directed ─┘
-                                   questions
+aligned_script.jsonl ──▶ questions to the agent (text + start/end)
+                                   │
+response.wav ──ASR──▶ agent speech ─┴─▶ match by time ─▶ Qwen judge ─▶ report
 ```
 
-## The safety catch (read this first)
+## Data
 
-**Nothing in this repo loads a model by default.** `judge.backend` defaults to
-`mock` and `asr.backend` to `gold`. Both `vllm` / `transformers` / `whisper`
-paths refuse to import unless you set:
+```
+<scripts_root>/<clip_id>/aligned_script.jsonl    timed ground truth, every speaker
+<eval_pack>/ids.txt                              clips to evaluate
+<eval_pack>/clips/<clip_id>/input.wav            users A+B+C, fed to the model
+<eval_pack>/clips/<clip_id>/response.wav         model output, 20 s longer
+```
+
+The clock in `aligned_script.jsonl` is the clock of `input.wav`, and
+`response.wav` starts at the same origin. Question timestamps are therefore
+read straight from the script.
+
+## How it works
+
+**Agent speaker.** Detected from the data: whoever the "AI Agent, …" turns
+address (`D` in the 4-speaker set).
+
+**Questions.** Human turns whose `addressing` contains the agent. Both
+`speech` and `continuer` turns count; backchannels are ignored throughout.
+
+**Reference answer.** The scripted agent turn that follows the question,
+bounded by the next question.
+
+**ASR.** faster-whisper `large-v3` on `response.wav` only. The human side is
+never transcribed — its text is already in the script.
+
+**Matching.** An agent segment answers a question if it starts within
+`[q_end − 1.0 s, min(q_end + 12 s, next_q_start + 1.0 s)]`. Segments less than
+0.8 s apart are merged into one answer. Filler-only segments (`uh`, `um`, …)
+are dropped; one-word answers are kept.
+
+**Judging.** Qwen3-32B via vLLM gets the preceding human speech, the question,
+the ASR'd answer and the reference, and returns JSON:
+`correct` · `partially_correct` · `incorrect` · `not_responsive` ·
+`unintelligible`. Questions with no agent speech in the window are marked
+`no_answer` by rule, without a model call.
+
+## Running
+
+Nothing loads a model unless `MOSHI_EVAL_ALLOW_HEAVY=1` is set.
+
+**Local, no models** — scripted agent text in place of ASR, mock judge:
 
 ```bash
-export MOSHI_EVAL_ALLOW_HEAVY=1
+PYTHONPATH=src python3 -m moshi_eval -c config/if4_offline.yaml timed
 ```
 
-A mock run is tagged `mock_unjudged` in every verdict, `mock_run: true` in the
-report JSON, accuracy is left `null`, and the markdown report opens with a
-warning banner — a mock run can't be mistaken for a real evaluation.
-
-## Two input layouts
-
-**A. Clip pack** (what `bathrooms/.../phase3_p0_IF_evalset_subset` is — the real case)
-
-```
-<pack>/ids.txt
-<pack>/clips/<clip_id>/input.wav      # user A+B mix
-<pack>/clips/<clip_id>/response.wav   # Moshi output, pad_sec=20 longer
-authored_scripts/<clip_id>_qa.json    # authored ground truth, keys "A,0"
-```
-
-The authored script has exact text but **no timestamps**; `input.wav` has the
-clock. `response.wav` shares that clock (plus a 20 s tail). Stage: `pack`.
-
-**B. Single session** — one `aligned_script.jsonl` with `start`/`end` plus one
-agent stem. Stages: `asr`/`pair`/`judge`/`report`/`run`.
-
-## Pairing modes
-
-| mode | how | needs |
-|---|---|---|
-| `time` (default) | ASR `input.wav`, align authored turns to it by token-F1 to timestamp each question, then match agent bursts on the shared clock | 2 ASR passes |
-| `order` | k-th agent burst answers the k-th question | 1 ASR pass |
-
-`order` is cheaper but **not safe on this pack**: `scripts/vad_preflight.py`
-measures 36/49 clips whose agent-burst count differs from their question count
-(5 clips are silent throughout, others speak 4–7 times), so k-th-to-k-th would
-misalign most of the set. Use `time`.
-
-`input.wav` is transcribed only to recover timing — the judge always sees the
-authored question text, never the ASR of it.
-
-## Preflight (no models, run this first)
-
-```bash
-python3 scripts/vad_preflight.py
-```
-
-Energy-VAD burst counts per clip vs. question counts, plus pad and silence
-stats, written to `runs/vad_preflight.json`. It tells you what the run will
-struggle with before you spend GPU time.
-
-## Local (laptop) — verify the plumbing
-
-```bash
-bash scripts/local_dryrun.sh                                  # single-session sample
-PYTHONPATH=src python3 -m moshi_eval -c config/pack_offline.yaml pack   # all 49 clips
-```
-
-Both load zero models: `asr.backend: gold` substitutes the authored text on a
-shared synthetic clock, `judge.backend: mock` emits `mock_unjudged`. This
-exercises discovery, alignment, pairing, prompt building and reporting.
-
-```bash
-python3 tests/test_offline.py && python3 tests/test_pack.py
-```
-
-## Server — the real run
+**Server:**
 
 ```bash
 pip install -r requirements-server.txt
-bash scripts/pack_server_run.sh config/pack_server.yaml pack_phase3_p0   # clip pack
-bash scripts/server_run.sh config/server_moshi.yaml moshi_run01          # single session
+module load cuda/12.6
+bash scripts/if4_server_run.sh
 ```
 
-Stages run separately (`asr` → `pair` → `judge` → `report`) so a judge crash
-doesn't discard the ASR pass. Re-run one stage with:
+Paths live in `config/if4_server.yaml`; override any key with
+`-s key=value`, e.g. `-s judge.model=/path/to/Qwen3-32B/snapshot`.
+
+**Calibration** — scripted agent text in place of ASR, real judge. Every
+answer is correct by construction, so this measures the judge and the matching
+on their own:
 
 ```bash
 PYTHONPATH=src MOSHI_EVAL_ALLOW_HEAVY=1 python3 -m moshi_eval \
-  -c config/server_moshi.yaml -s judge.backend=vllm judge
+  -c config/if4_offline.yaml -s judge.backend=vllm timed
 ```
 
-## Stages
+On the 155-clip IF4 set this scores 310/310.
 
-| stage | reads | writes | cost |
-|---|---|---|---|
-| `asr` | agent `.wav` | `asr.jsonl` | GPU |
-| `pair` | `asr.jsonl` + ground truth | `pairs.jsonl`, `prompts.jsonl`, `unmatched_agent_segments.jsonl` | free |
-| `judge` | `pairs.jsonl` | `verdicts.jsonl` | GPU |
-| `report` | `pairs` + `verdicts` | `report.json`, `report.md`, `config.used.json` | free |
+**Re-judging without re-transcribing:** `-s data.reuse_asr=true` loads
+`asr.jsonl` from the previous run of the same `run_name`.
 
-## How questions are found
+## Output
 
-A ground-truth turn counts as a question to the agent when
-`function == "speech"` **and** the selector matches:
+Written to `runs/<run_name>/`:
 
-- `addressing` (default) — `addressing` contains the agent speaker id
-- `wakeword` — text matches `AI Agent` / `hey agent` / `assistant`
-- `any` / `both` — combine the two
+| file | contents |
+|---|---|
+| `pairs.jsonl` | per question: text, reference, agent's ASR'd answer, timing |
+| `verdicts.jsonl` | judge decision and reason per question |
+| `report.md` / `report.json` | accuracy, verdict counts, no-answer rate, latency |
+| `asr.jsonl` | raw ASR segments |
+| `prompts.jsonl` | exact prompts sent to the judge |
+| `unmatched_agent_segments.jsonl` | agent speech that answered no question |
 
-Backchannels are never queries. **Row order in the jsonl is not time order** —
-overlapping turns appear out of sequence (in the sample `g006` precedes `g005`
-but starts later), so everything is re-sorted by `start`.
+`python3 scripts/inspect_run.py runs/<run_name>` prints each question next to
+what the agent said.
 
-## How answers are matched
+## Other input layouts
 
-An ASR group answers a query if it starts within
-`[query_end − overlap_tolerance_s, min(query_end + response_window_s, next_query_start + tol)]`.
-Consecutive ASR segments closer than `merge_gap_s` merge into one answer. The
-negative lower bound allows barge-in — Moshi is full-duplex and may start before
-the human finishes.
-
-Unmatched agent speech is written to `unmatched_agent_segments.jsonl`. **Check
-that file**: it's either unprompted agent output (interesting) or a pairing
-miss (a bug).
-
-## Verdicts
-
-`correct` · `partially_correct` · `incorrect` · `not_responsive` ·
-`no_answer` · `unintelligible` · `mock_unjudged`
-
-`no_answer` and `unintelligible` for empty spans are decided by rule, without
-burning a judge call.
-
-## What the numbers can and cannot say
-
-- `no_answer` with `time_known: false` means **alignment failed**, not that the
-  agent was silent. The two are never merged.
-- `count_mismatch` (order mode only) marks clips where burst count ≠ question
-  count, so an off-by-one match is possible.
-- A run configured with `judge.backend: mock` reports `accuracy: null` even
-  when every pair was settled by rule and the model was never called.
-
-## Reference-free vs reference-based
-
-The authored scripts **do** contain the agent's intended answers (the `C,*`
-turns), so the clip pack can be judged reference-based — `config/pack_server.yaml`
-sets `use_reference: true`. Only the single-session Moshi layout, where no
-agent transcript exists at all, needs `use_reference: false`.
-
-Before trusting Moshi numbers, run `config/server_calibration.yaml`: the real
-judge, reference-free, over the scripted TTS audio whose answers you already
-know. Anything it gets wrong there is a judge or ASR problem, not an agent one.
-
-## Preparing a Moshi run
-
-```
-data/moshi_run01/
-  aligned_script.jsonl   # human turns only (A, B) — same schema as the sample
-  agent_track.wav        # Moshi output stem, same session clock as the humans
-```
-
-The agent stem **must share the session timeline** with the human tracks —
-pairing is purely timestamp-based. If Moshi is recorded on its own clock,
-offset-correct it first.
-
-## Known data quirk
-
-In `aligned_script.jsonl`, top-level `gap_ms` disagrees with `rel.gap_ms` for
-overlapping turns (`g005`: `-7081.6` vs `+77.0`). This pipeline reads neither —
-it works from `start` / `end` — but anything else consuming these files should
-be aware.
+- `pack` stage — 3-speaker clip packs whose authored scripts
+  (`<clip_id>_qa.json`) have no timestamps; question times are recovered by
+  transcribing `input.wav` and aligning the script to it.
+- `run` stage — a single long session with one `aligned_script.jsonl` and one
+  agent stem.
